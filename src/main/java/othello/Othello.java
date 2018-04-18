@@ -1,15 +1,7 @@
 package othello;
 
 import java.util.*;
-import java.util.logging.Level;
-import java.util.logging.Logger;
-
-
-interface Player {
-    int[] getMove(int turn);
-}
-
-
+// TODO: restrict access of fields and methods that are only used by test cases.
 public class Othello {
 
     public static final int NONE = 0;
@@ -23,8 +15,18 @@ public class Othello {
     public static final int WHITE = 2;
 
     private Scanner scan;
+    /**
+     * isUnDo flag is used in #playGame method for 'undo' related flow control.<br/>
+     * Always remember to set it to false after undo is done.
+     */
+    boolean isUnDo;
 
-    private static Logger LOGGER;
+    /**
+     * The history array stores all the recorded moves. <br/>
+     * Each record is stored as an int[] array of length 3, where the first element is the row index,
+     * the second is the column index, and the third is the player: 1 (BLACK) or 2(WHITE).
+     */
+    int[][] history;
 
     /**
      * Direction stores the relative coordinate of all the adjacent pieces on 8 directions.
@@ -69,17 +71,27 @@ public class Othello {
 
     // reset the board and initialize the class
     private void init(int size) {
+        board = createBoard(size);
+        history = resetHistory(size);
+        inTurn = BLACK;
+        // initialize the scanner for reading user input
+        scan = new Scanner(System.in);
+    }
+
+    // reset the history
+    private int[][] resetHistory(int size) {
+        int[][] history = new int[size * size][];
+        return history;
+    }
+
+    int[][] createBoard(int size) {
         // create the initial state of the game
-        board = new int[size][size];
+        int[][] board = new int[size][size];
         board[3][4] = BLACK;
         board[4][3] = BLACK;
         board[3][3] = WHITE;
         board[4][4] = WHITE;
-        inTurn = BLACK;
-        // init the logger
-        LOGGER = Logger.getLogger(this.getClass().getSimpleName());
-        // initialize the scanner for reading user input
-        scan = new Scanner(System.in);
+        return board;
     }
 
     /**
@@ -87,15 +99,16 @@ public class Othello {
      * @param row Row index.
      * @param col Column index.
      * @param player The player in play. BLACK 1 or WHITE 0.
+     * @param board
      * @return true if the move is valid.
      */
-    public boolean isValid(int row, int col, int player) {
+    public boolean isValid(int row, int col, int player, int[][] board) {
         int[] pos = {row, col};
-        if (!withInBoard(pos)) return false;
-        if (!checkColor(pos, NONE)) return false;
+        if (!withInBoard(pos, board)) return false;
+        if (!checkColor(pos, NONE, board)) return false;
         for (Direction direction : Direction.values()) {
             // find the bracketing piece on the direction
-            int[] bracketingPos = findBracketingPiece(pos, player, direction);
+            int[] bracketingPos = findBracketingPiece(pos, player, direction, board);
             if (bracketingPos != null) {
                 return true;
             }
@@ -112,21 +125,22 @@ public class Othello {
      * @param pos The target position
      * @param player The player who is play. BLACK 1 or WHITE 2
      * @param direction The direction. See #Direction.
+     * @param board
      * @return The position of the bracketing piece. An int[] array of size 2,
      * where the first element is the row index, and the second element is the column index.
      * Index starts from 0.
      */
-    private int[] findBracketingPiece(int[] pos, int player, Direction direction) {
+    private int[] findBracketingPiece(int[] pos, int player, Direction direction, int[][] board) {
         pos = direction.step(pos);
         // at least one piece of opponent color
-        if (withInBoard(pos) && checkColor(pos, opponent(player))) {
+        if (withInBoard(pos, board) && checkColor(pos, opponent(player), board)) {
             // step through the line of opponent color
             int opponent = opponent(player);
-            while (withInBoard(pos) && checkColor(pos, opponent)) {
+            while (withInBoard(pos, board) && checkColor(pos, opponent, board)) {
                 pos = direction.step(pos);
             }
             // the bracketing piece
-            if (withInBoard(pos) && checkColor(pos, player)) {
+            if (withInBoard(pos, board) && checkColor(pos, player, board)) {
                 return pos;
             } else {
                 return null;
@@ -141,23 +155,25 @@ public class Othello {
         return opponent;
     }
 
-    private boolean checkColor(int[] pos, int opponent) {
+    private boolean checkColor(int[] pos, int opponent, int[][] board) {
         return board[pos[0]][pos[1]] == opponent;
     }
 
-    boolean withInBoard(int[] pos) {
+    boolean withInBoard(int[] pos, int[][] board) {
         return pos[0] > -1 && pos[0] < board.length && pos[1] > -1 && pos[1] < board.length;
     }
 
     /**
      * Check if the #player has any valid moves available on the board.
      * @param player The player who is play. BLACK 1 or WHITE 2
+     * @param board The board.
      * @return
+     * @see #board
      */
-    public boolean hasValidMoves(int player) {
+    public boolean hasValidMoves(int player, int[][] board) {
         for (int row = 0; row < board.length; row++) {
             for (int col = 0; col < board.length; col++) {
-                if (isValid(row, col, player)) {
+                if (isValid(row, col, player, board)) {
                     return true;
                 }
             }
@@ -171,12 +187,14 @@ public class Othello {
      * @param row Row index of the target position
      * @param col Column index of the target position
      * @param player The player who is play. BLACK 1 or WHITE 2
+     * @param board The board.
+     * @see #board
      */
-    public void makeMove(int row, int col, int player) {
+    public void makeMove(int row, int col, int player, int[][] board) {
         int[] pos = {row, col};
         for (Direction direction : Direction.values()) {
             // find the bracketing piece on the direction
-            int[] bracketingPos = findBracketingPiece(pos, player, direction);
+            int[] bracketingPos = findBracketingPiece(pos, player, direction, board);
             if (bracketingPos != null) {
                 // fill the move targeted piece
                 board[row][col] = player;
@@ -191,39 +209,30 @@ public class Othello {
     }
 
     /**
-     * Get a random position that is valid for the player who is in #turn to play.
-     * <b> Call hasValidMoves before this method </b> to ensure there are valid moves for the player.
-     * Otherwise, the method may throw NoSuchElementException.
-     * @param turn
-     * @return
+     * Record a move into the history[][]
+     * @param row Row index of the target position.
+     * @param col Column index of the target position.
+     * @param player The player who is play. BLACK 1 or WHITE 2
+     * @param history The history.
+     * @see #history
+     * 
      */
-    int[] getRandomMove(int turn) {
-        // get all empty position
-        List<int[]> emptyPositions = new LinkedList<>();
-        for (int row = 0; row < board.length; row++) {
-            for (int col = 0; col < board.length; col++) {
-                if (board[row][col] == NONE) {
-                    emptyPositions.add(new int[]{row,col});
-                }
+    void recordMove(int row, int col, int player, int[][] history) {
+        int i = 0;
+        for (; i < history.length; i++) {
+            if (history[i] == null) {
+                break;
             }
         }
-        // shuffle sort
-        Collections.shuffle(emptyPositions);
-        // iterate through and get the first valid move
-        int[]move = emptyPositions.stream()
-                .filter(xy -> isValid(xy[0], xy[1], turn))
-                .findAny()
-                .get();
-        // pretend we are humanbeing
-        String player = turn == BLACK ? "X" : "O";
-        System.out.printf("Player '%s' move: %s%s%n", player, formatRow(move[0]), formatCol(move[1]));
-        return move;
+        history[i] = new int[]{row, col, player};
     }
 
     /**
      * Print the result of a game. Called by #playGame after the end of a game.
+     * @param board The board.
+     * @see #board
      */
-    void printResult() {
+    void printResult(int[][] board) {
         // count the pieces
         int black = 0;
         int white = 0;
@@ -256,12 +265,14 @@ public class Othello {
      *  or
      *  b. there are no valid moves for both players
       * @return
+     * @param board The board.
+     * @see #board
      */
-    boolean endOfGame() {
+    boolean endOfGame(int[][] board) {
         // board is full
         if (boardFull(board)) return true;
         // no valid moves for both players
-        if (hasValidMoves(BLACK) || hasValidMoves(WHITE)) {
+        if (hasValidMoves(BLACK, board) || hasValidMoves(WHITE, board)) {
             return false;
         } else {
             return true;
@@ -286,19 +297,20 @@ public class Othello {
 
     /**
      * This method prints the board to the console
+     * @param board
      */
-    public void printBoard() {
+    public void printBoard(int[][] board) {
         int numBlacks = 0;
         int numWhites = 0;
-        printHeader();
+        printHeader(board);
         // print each line
-        for (int i = 0; i < this.board.length; i++) {
+        for (int i = 0; i < board.length; i++) {
             System.out.printf("%s ",formatRow(i));
-            for (int j = 0; j < this.board.length; j++) {
-                if (this.board[i][j] == WHITE) {
+            for (int j = 0; j < board.length; j++) {
+                if (board[i][j] == WHITE) {
                     System.out.printf("O");
                     numWhites++;
-                } else if (this.board[i][j] == BLACK) {
+                } else if (board[i][j] == BLACK) {
                     System.out.printf("X");
                     numBlacks++;
                 } else {
@@ -307,7 +319,7 @@ public class Othello {
             }
             System.out.println();
         }
-        printHeader();
+        printHeader(board);
         printFooter(numBlacks, numWhites);
 
     }
@@ -320,21 +332,21 @@ public class Othello {
     }
 
     // print header
-    private void printHeader() {
+    private void printHeader(int[][] board) {
         System.out.printf("  ");
-        for (int i = 0; i < this.board.length; i++) {
+        for (int i = 0; i < board.length; i++) {
             System.out.printf(formatCol(i));
         }
         System.out.println();
     }
 
     // format row index to human readable number(starting from 1)
-    private String formatRow(int i) {
+    String formatRow(int i) {
         return (i + 1) + "";
     }
 
     // format column index to human readable header
-    private String formatCol(int i) {
+    String formatCol(int i) {
         int first = 'a';
         char colChar = (char) (first + i);
         return String.valueOf(colChar);
@@ -354,11 +366,16 @@ public class Othello {
      * @return The move.
      */
     int[] getMove(int turn) {
-        String s = getUserInput(turn);
-        return parseUserInput(s);
+        String s = getUserInput(turn, scan);
+        if ("u".equals(s)) {
+            this.isUnDo = true;
+            return new int[] {-1, -1};
+        } else {
+            return parseUserInput(s);
+        }
     }
 
-    String getUserInput(int turn) {
+    String getUserInput(int turn, Scanner scan) {
         String s = null;
         // promote for user input
         String player = turn == BLACK ? "X" : "O";
@@ -375,10 +392,62 @@ public class Othello {
 
             return new int[]{row, col};
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING,"Failed to parse user input. '" + s + "'.", e);
+            System.out.println("Failed to parse user input. '" + s + "'.");
+            e.printStackTrace();
             return new int[]{-1, -1};
         }
 
+    }
+
+    /**
+     * Replay the first (index +1) of recorded moves in #history onto the #board.
+     * @param history The history.
+     * @param index The index of last record to play. Starting from 0.
+     * @param board The board.
+     * @see #board
+     * @see #history
+     */
+    void replay(int[][] history, int index, int[][] board) {
+        index = Math.min(index +1, history.length);
+        for (int i=0; i < index; i++) {
+            int[] record = history[i];
+            makeMove(record[0], record[1], record[2], board);
+            // System.out.println("index: " + i);
+            // printBoard(board);
+        }
+    }
+
+    /**
+     * Undo the last move. This method is called by the #playGame when the #isUnDo flag is true.
+     * It creates a new board and replayed all the recorded moves in #history except the last one.
+     * It then replaces the Othello.board with the newly created board, as well as updates the
+     * value of other fields like #history, #isUnDo, and #inTurn.
+     */
+    void undo() {
+        // find the first null record
+        int latestMove = -1;
+        for (int i = 0; i < history.length; i++) {
+            if (history[i] != null) {
+                latestMove = i;
+            } else {
+                latestMove = i-1;
+                break;
+            }
+        }
+        // do nothing if no history records
+        if (latestMove == -1) {
+            System.out.println("Warning: No history record found.");
+            return;
+        }
+
+        // init a new board
+        int[][] newBoard = createBoard(board.length);
+        // replay till the previous move
+        replay(this.history, latestMove-1, newBoard);
+        this.inTurn = this.history[latestMove][2];
+        this.history[latestMove] = null;
+        isUnDo = false;
+        this.board = newBoard;
     }
 
     /**
@@ -387,43 +456,44 @@ public class Othello {
      * @param white The #other player.
      */
     void playGame(Player black, Player white) {
-        printBoard();
+        printBoard(board);
         while (true) {
-            if (endOfGame()) break;
+            if (endOfGame(this.board)) break;
             // check who is in turn
             int turn = getTurn();
-            turn = hasValidMoves(turn) ? turn : opponent(turn);
+            turn = hasValidMoves(turn, board) ? turn : opponent(turn);
 
             int[] xy = {-1,-1};
             if (BLACK == turn) {
-                xy = black.getMove(turn);
+                xy = black.getMove(turn, board);
             } else if (WHITE == turn) {
-                xy = white.getMove(turn);
+                xy = white.getMove(turn, board);
             } else {
-                LOGGER.warning("Unexpected 'turn' value: " + turn + " . Game ended.");
                 break;
             }
-            if (!isValid(xy[0], xy[1], turn)) {
+            if (isUnDo) {
+                undo();
+                printBoard(board);
+                continue;
+            }
+            if (!isValid(xy[0], xy[1], turn, board)) {
                 System.out.println("Invalid move. Please try again.");
                 continue;
             } else {
-                makeMove(xy[0], xy[1], turn);
+                makeMove(xy[0], xy[1], turn, board);
+                recordMove(xy[0], xy[1], turn, history);
                 this.inTurn = opponent(turn);
             }
-            printBoard();
+            printBoard(board);
         }
-        printResult();
+        printResult(board);
     }
 
     private void playGame() {
-        // AI vs AI
-        playGame((b-> getRandomMove(b)), (w -> getRandomMove(w)));
-        // human vs AI
-        init(8);
-        playGame((b-> getMove(b)), (w -> getRandomMove(w)));
+        Player human = (turn, b) -> getMove(turn);
         // human player vs human player
         init(8);
-        playGame((b-> getMove(b)), (w -> getMove(w)));
+        playGame(human, human);
     }
 
     /**
